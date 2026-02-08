@@ -88,9 +88,15 @@
     }
 
     function showAnswer() {
-      const q = qs[idx];
-      document.getElementById("result").textContent = `答え: ${q.answer}`;
-    }
+  const q = qs[idx];
+
+  // "images/xxx.png" から "xxx" を取り出す（必要なら .png も表示できる）
+  const fileWithExt = q.image.split("/").pop();         // xxx.png
+  const fileNoExt = fileWithExt.replace(/\.png$/i, ""); // xxx
+
+  document.getElementById("result").textContent =
+    `答え: ${q.answer} / filename: ${fileNoExt}`;
+}
 
     function nextQuestion() {
       idx = (idx + 1) % qs.length;
