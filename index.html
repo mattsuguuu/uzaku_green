@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quiz</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 16px; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    img { width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; }
+    input, button { font-size: 16px; padding: 10px; }
+    input { width: 100%; box-sizing: border-box; margin-top: 10px; }
+    .row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    button { flex: 1; min-width: 140px; }
+    .meta { margin: 10px 0; color: #555; }
+    .result { margin-top: 12px; font-weight: 700; }
+    .small { color: #666; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h2>クイズ</h2>
+    <div class="meta" id="meta"></div>
+    <img id="qimg" alt="question image" />
+    <input id="answer" type="text" placeholder="答えを入力" autocomplete="off" />
+    <div class="row">
+      <button id="btnCheck">判定</button>
+      <button id="btnShow">答えを見る</button>
+      <button id="btnNext">次へ</button>
+    </div>
+    <div class="result" id="result"></div>
+    <div class="small" id="score"></div>
+  </div>
+
+  <script>
+    // ====== 設定 ======
+    const JSON_FILE = "uzaku_green.json";
+    // ==================
+
+    let qs = [];
+    let idx = 0;
+    let correctCount = 0;
+    let answeredCount = 0;
+
+    // ゆるめの正規化（スペース/大小/全角半角の揺れを減らす）
+    function normalize(s) {
+      return (s ?? "")
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .normalize("NFKC"); // 全角半角などを寄せる
+    }
+
+    function setQuestion() {
+      const q = qs[idx];
+      document.getElementById("meta").textContent = `問題 ${idx + 1} / ${qs.length}（No.${q.no}）`;
+      document.getElementById("qimg").src = q.image;
+      document.getElementById("answer").value = "";
+      document.getElementById("result").textContent = "";
+      updateScore();
+    }
+
+    function updateScore() {
+      document.getElementById("score").textContent =
+        `回答数: ${answeredCount} / 正解数: ${correctCount}`;
+    }
+
+    function checkAnswer() {
+      const q = qs[idx];
+      const user = normalize(document.getElementById("answer").value);
+      const ans = normalize(q.answer);
+
+      if (!user) {
+        document.getElementById("result").textContent = "答えを入力してください。";
+        return;
+      }
+
+      answeredCount += 1;
+
+      if (user === ans) {
+        correctCount += 1;
+        document.getElementById("result").textContent = "✅ 正解！";
+      } else {
+        document.getElementById("result").textContent = `❌ 不正解。正解: ${q.answer}`;
+      }
+      updateScore();
+    }
+
+    function showAnswer() {
+      const q = qs[idx];
+      document.getElementById("result").textContent = `答え: ${q.answer}`;
+    }
+
+    function nextQuestion() {
+      idx = (idx + 1) % qs.length;
+      setQuestion();
+    }
+
+    async function init() {
+      // ローカルファイル直開きだと fetch が動かないことがあるので、後述の方法で開くの推奨
+      const res = await fetch(JSON_FILE);
+      qs = await res.json();
+
+      // シャッフル
+      for (let i = qs.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [qs[i], qs[j]] = [qs[j], qs[i]];
+      }
+
+      setQuestion();
+    }
+
+    document.getElementById("btnCheck").addEventListener("click", checkAnswer);
+    document.getElementById("btnShow").addEventListener("click", showAnswer);
+    document.getElementById("btnNext").addEventListener("click", nextQuestion);
+
+    // Enterで判定
+    document.getElementById("answer").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") checkAnswer();
+    });
+
+    init().catch(err => {
+      document.getElementById("result").textContent =
+        "読み込みに失敗しました。index.htmlを「サーバー経由」で開いてください（下の手順参照）。";
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
