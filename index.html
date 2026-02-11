@@ -62,16 +62,13 @@
 <script>
   // ====== 設定 ======
   const JSON_FILE = "uzaku_green.json";
-  const SKIP_STREAK = 3;                 // 3回連続正解でスキップ
+  const SKIP_STREAK = 3;                 // 3回連続正解でクリア（以後スキップ）
   const LS_KEY = "uzaku_green_stats_v1"; // 実績保存＆同期用
   // ==================
 
   let allQs = []; // 全問題（JSONそのまま）
-  let qs = [];    // 出題プール（streak<3）
+  let qs = [];    // 出題プール（未クリアのみ）
   let idx = 0;
-
-  let correctCount = 0;
-  let answeredCount = 0;
 
   // stats: { [no]: {streak, correct, wrong} }
   let stats = loadStats();
@@ -84,8 +81,9 @@
     localStorage.setItem(LS_KEY, JSON.stringify(stats));
   }
   function getStat(no) {
-    if (!stats[no]) stats[no] = { streak: 0, correct: 0, wrong: 0 };
-    return stats[no];
+    const key = String(no);
+    if (!stats[key]) stats[key] = { streak: 0, correct: 0, wrong: 0 };
+    return stats[key];
   }
 
   function normalize(s) {
@@ -104,25 +102,25 @@
     }
   }
 
-  function rebuildPool() {
-    qs = allQs.filter(q => getStat(q.no).streak < SKIP_STREAK);
-    shuffle(qs);
-    idx = 0;
-    updateMasterUI();
-  }
-
-  function updateScore() {
-    const mastered = countMastered();
-    document.getElementById("score").textContent =
-      `回答数: ${answeredCount} / 正解数: ${correctCount} ｜ 3連続達成: ${mastered}/${allQs.length}`;
-  }
-
+  // ====== 累計集計 ======
   function countMastered() {
     let mastered = 0;
     for (const q of allQs) {
       if (getStat(q.no).streak >= SKIP_STREAK) mastered += 1;
     }
     return mastered;
+  }
+
+  function getTotalsFromStats() {
+    let totalCorrect = 0;
+    let totalWrong = 0;
+
+    for (const k of Object.keys(stats)) {
+      const s = stats[k] || {};
+      totalCorrect += (s.correct || 0);
+      totalWrong += (s.wrong || 0);
+    }
+    return { totalCorrect, totalWrong, totalAnswered: totalCorrect + totalWrong };
   }
 
   function updateMasterUI() {
@@ -136,9 +134,28 @@
     if (barEl) barEl.style.width = `${pct}%`;
   }
 
+  function updateScore() {
+    const { totalCorrect, totalWrong, totalAnswered } = getTotalsFromStats();
+    const mastered = countMastered();
+    const scoreEl = document.getElementById("score");
+    if (!scoreEl) return;
+
+    scoreEl.textContent =
+      `回答数: ${totalAnswered} / 正解数: ${totalCorrect} / 不正解数: ${totalWrong} ｜ クリア(3連続): ${mastered}/${allQs.length}`;
+  }
+
+  // ====== 出題プール（未クリアのみ） ======
+  function rebuildPool() {
+    qs = allQs.filter(q => getStat(q.no).streak < SKIP_STREAK);
+    shuffle(qs);
+    idx = 0;
+    updateMasterUI();
+    updateScore();
+  }
+
   function setQuestion() {
     if (qs.length === 0) {
-      document.getElementById("meta").textContent = "全問達成！（3連続正解でスキップ済み）";
+      document.getElementById("meta").textContent = "全問クリア！（3連続正解でクリア済み）";
       document.getElementById("qimg").removeAttribute("src");
       document.getElementById("result").textContent = "実績リセットで最初からできます。";
       updateMasterUI();
@@ -147,24 +164,29 @@
     }
 
     const q = qs[idx];
-    const st = getStat(q.no);
 
+    // 表示はシンプルに（Noや連続表示は無し）
     document.getElementById("meta").textContent =
-      `問題 ${idx + 1} / ${qs.length}（No.${q.no}｜連続正解: ${st.streak}）`;
+      `問題 ${idx + 1} / ${qs.length}`;
 
-    document.getElementById("qimg").src = q.image;
+    const img = document.getElementById("qimg");
+    img.onerror = null; // 前のエラー設定をクリア
+    img.src = encodeURI((q.image || "").trim());
+
     document.getElementById("answer").value = "";
     document.getElementById("result").textContent = "";
+
     updateMasterUI();
     updateScore();
   }
 
+  // ====== ボタン動作 ======
   function showAnswer() {
     if (qs.length === 0) return;
     const q = qs[idx];
 
-    const fileWithExt = q.image.split("/").pop();         // xxx.png
-    const fileNoExt = fileWithExt.replace(/\.png$/i, ""); // xxx
+    const fileWithExt = (q.image || "").split("/").pop();         // xxx.png
+    const fileNoExt = (fileWithExt || "").replace(/\.png$/i, ""); // xxx
 
     document.getElementById("result").textContent =
       `答え: ${q.answer} / filename: ${fileNoExt}`;
@@ -182,21 +204,19 @@
       return;
     }
 
-    answeredCount += 1;
     const st = getStat(q.no);
 
     if (user === ans) {
-      correctCount += 1;
       st.correct += 1;
       st.streak += 1;
 
       if (st.streak >= SKIP_STREAK) {
-        document.getElementById("result").textContent = `✅ 正解！ 3連続達成 → 今後スキップ`;
-        // この問題をプールから除外
+        document.getElementById("result").textContent = `✅ 正解！ 3連続達成 → クリア（以後スキップ）`;
+        // クリアした問題はプールから除外
         qs.splice(idx, 1);
         if (idx >= qs.length) idx = 0;
       } else {
-        document.getElementById("result").textContent = `✅ 正解！（連続正解: ${st.streak}）`;
+        document.getElementById("result").textContent = `✅ 正解！`;
       }
     } else {
       st.wrong += 1;
@@ -215,53 +235,65 @@
     setQuestion();
   }
 
-  // ===== 同期UI（プランB：コピペ） =====
+  // ====== 同期UI（プランB：コピペ） ======
   function openSyncUI(text = "") {
     const box = document.getElementById("syncBox");
     const row = document.getElementById("syncRow");
+    if (!box || !row) return;
+
     box.style.display = "block";
     row.style.display = "flex";
     box.value = text;
-    document.getElementById("syncMsg").textContent = "";
+    const msg = document.getElementById("syncMsg");
+    if (msg) msg.textContent = "";
     box.focus();
   }
+
   function closeSyncUI() {
-    document.getElementById("syncBox").style.display = "none";
-    document.getElementById("syncRow").style.display = "none";
-    document.getElementById("syncMsg").textContent = "";
+    const box = document.getElementById("syncBox");
+    const row = document.getElementById("syncRow");
+    if (box) box.style.display = "none";
+    if (row) row.style.display = "none";
+    const msg = document.getElementById("syncMsg");
+    if (msg) msg.textContent = "";
   }
+
   function exportStatsText() {
     const text = localStorage.getItem(LS_KEY) || "{}";
     openSyncUI(text);
-    document.getElementById("syncMsg").textContent =
-      "このJSONをコピー → 別端末で貼り付け → 取り込みしてください。";
+    const msg = document.getElementById("syncMsg");
+    if (msg) msg.textContent = "このJSONをコピー → 別端末で貼り付け → 取り込みしてください。";
   }
+
   function importStatsText(text) {
     let obj;
     try {
       obj = JSON.parse(text);
       if (typeof obj !== "object" || obj === null) throw new Error("not object");
     } catch {
-      document.getElementById("syncMsg").textContent = "JSONの形式が正しくありません。";
+      const msg = document.getElementById("syncMsg");
+      if (msg) msg.textContent = "JSONの形式が正しくありません。";
       return;
     }
+
     stats = obj;
     saveStats();
     rebuildPool();
     setQuestion();
-    document.getElementById("syncMsg").textContent = "取り込み完了。";
+
+    const msg = document.getElementById("syncMsg");
+    if (msg) msg.textContent = "取り込み完了。";
   }
+
   function resetStats() {
     if (!confirm("実績をリセットしますか？")) return;
     stats = {};
     saveStats();
     rebuildPool();
-    correctCount = 0;
-    answeredCount = 0;
     setQuestion();
   }
 
-  // ===== 初期化 =====
+  // ====== 初期化 ======
   async function init() {
     const res = await fetch(JSON_FILE);
     allQs = await res.json();
@@ -269,40 +301,47 @@
     setQuestion();
   }
 
-  // ===== イベント =====
-  document.getElementById("btnCheck").addEventListener("click", checkAnswer);
-  document.getElementById("btnShow").addEventListener("click", showAnswer);
-  document.getElementById("btnNext").addEventListener("click", nextQuestion);
+  // ====== イベント登録 ======
+  document.getElementById("btnCheck")?.addEventListener("click", checkAnswer);
+  document.getElementById("btnShow")?.addEventListener("click", showAnswer);
+  document.getElementById("btnNext")?.addEventListener("click", nextQuestion);
 
-  document.getElementById("answer").addEventListener("keydown", (e) => {
+  document.getElementById("answer")?.addEventListener("keydown", (e) => {
     if (e.key === "Enter") checkAnswer();
   });
 
-  // 同期ボタン
-  document.getElementById("btnExport").addEventListener("click", exportStatsText);
-  document.getElementById("btnImport").addEventListener("click", () => openSyncUI(""));
-  document.getElementById("btnResetStats").addEventListener("click", resetStats);
+  document.getElementById("btnExport")?.addEventListener("click", exportStatsText);
+  document.getElementById("btnImport")?.addEventListener("click", () => openSyncUI(""));
+  document.getElementById("btnResetStats")?.addEventListener("click", resetStats);
 
-  document.getElementById("btnCopy").addEventListener("click", async () => {
+  document.getElementById("btnCopy")?.addEventListener("click", async () => {
     const box = document.getElementById("syncBox");
+    const msg = document.getElementById("syncMsg");
+    if (!box) return;
+
     try {
       await navigator.clipboard.writeText(box.value);
-      document.getElementById("syncMsg").textContent = "コピーしました。";
+      if (msg) msg.textContent = "コピーしました。";
     } catch {
       box.select();
-      document.getElementById("syncMsg").textContent = "長押し→コピーで手動コピーしてください。";
+      if (msg) msg.textContent = "長押し→コピーで手動コピーしてください。";
     }
   });
-  document.getElementById("btnApply").addEventListener("click", () => {
-    importStatsText(document.getElementById("syncBox").value);
+
+  document.getElementById("btnApply")?.addEventListener("click", () => {
+    const box = document.getElementById("syncBox");
+    if (!box) return;
+    importStatsText(box.value);
   });
-  document.getElementById("btnCloseSync").addEventListener("click", closeSyncUI);
+
+  document.getElementById("btnCloseSync")?.addEventListener("click", closeSyncUI);
 
   init().catch(err => {
-    document.getElementById("result").textContent =
-      "読み込みに失敗しました。GitHub PagesのURLで開いてください。";
+    const result = document.getElementById("result");
+    if (result) result.textContent = "読み込みに失敗しました。";
     console.error(err);
   });
 </script>
+
 </body>
 </html>
